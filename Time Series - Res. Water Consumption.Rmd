@@ -6,8 +6,10 @@ output:
   html_document: 
     toc: true 
     self_contained: true 
+    always_allow_html: true
   github_document: 
     toc: true
+
 ---
 
 ```{r setup, include=FALSE}
