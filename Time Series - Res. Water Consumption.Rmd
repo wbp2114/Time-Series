@@ -1,0 +1,474 @@
+---
+title: "Time Series - Water Consumption"
+author: "Bill Peterson"
+date: "12/5/2019"
+output: 
+  html_document: 
+    toc: true 
+    self_contained: true 
+  github_document: 
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+## preload package to eliminate package start up messages
+library(tsdl)
+library(dplyr)
+library(zoo)
+library(xts)
+library(sparkline)
+library(formattable)
+library(ggplot2)
+library(GGally)
+library(dygraphs)
+library(ggfortify)
+library(forecast)
+```
+
+
+## The Data - Residential Water Consumption in London, 1983 - 1994
+The dataset was obtained from the R package "**tsdl**" via GitHub, and is comprised of monthly observations from Janaury 1983 through April 1994. https://github.com/FinYang/tsdl/tree/master/data-raw/londonwq 
+
+The relevant tsdl data sets we want:
+
+[[249]] "Total number of water consumers, Jan 1983 – April 1994. Missing value for June 1988 (66th obs.) estimated by intervention analysis. London, United Kingdom."
+
+[[344]] "Monthly precipitation (in mm), Jan 1983 – April 1994. London, United Kingdom."
+
+[[378]] "Monthly temperature (in Celsius), Jan 1983 – April 1994. London, United Kingdom."
+
+[[393]] "Residential water consumption, Jan 1983 – April 1994. Missing value for June 1988 (66th obs.) estimated by intervention analysis. London, United Kingdom."
+
+```{r, message = FALSE, error = FALSE, warning = FALSE, results = "hide"}
+#install.packages("devtools")
+#devtools::install_github("FinYang/tsdl") 
+library(tsdl)
+library(dplyr)
+library(zoo)
+library(xts)
+library(sparkline)
+library(formattable)
+library(ggplot2)
+library(GGally)
+library(ggfortify)
+
+
+water_consump <- tsdl[[393]] 
+num_consumers <- tsdl[[249]]
+precipitation_ml <- tsdl[[344]]
+temp_celcius <- tsdl[[378]]
+
+
+tsdl_london <- as.data.frame(cbind(water_consump, num_consumers, precipitation_ml, temp_celcius))
+
+# since each variable is a timeseries data type and has the same time period, the series and month can be extracted from any series.
+# series order
+tsdl_london$time_in_months <- (as.numeric(time(num_consumers)) - 1983) * 12
+
+# add calendar month index and year from timeseries objects
+tsdl_london$month <- as.numeric(format(as.yearmon(time(water_consump), "%b %Y"), "%m"))
+tsdl_london$year <- as.numeric(trunc(time(water_consump)))
+
+# add seasons and a Fahrenheit temperature scale
+tsdl_london <-  tsdl_london %>% 
+  mutate(
+    season = case_when(
+      month %in%  9:11 ~ "Fall",
+      month %in%  c(12, 1, 2)  ~ "Winter",
+      month %in%  3:5  ~ "Spring",
+      TRUE ~ "Summer"), 
+    temp_fahrenheit = as.numeric(temp_celcius) * 9 / 5 + 32, 
+    consump1M = water_consump/1000000, 
+    consumers1k = num_consumers/1000)
+
+# make the data.frame a timeseries object
+tsdl_london.ts <- ts(tsdl_london, start = c(1983,1),frequency = 12)
+```
+
+
+
+```{r, include = FALSE}
+library(dygraphs)
+library(RColorBrewer)
+```
+
+```{r}
+library(dygraphs)
+library(RColorBrewer)
+
+
+dygraph(tsdl_london.ts[,c(10, 11, 3, 4)], 
+        main = "London Water Consumption, Janaury 1983 - April 1994") %>% 
+  dyOptions(pointShape = "circle", strokeWidth = 2, colors = RColorBrewer::brewer.pal(4, "Dark2")) %>%
+  dyLegend(show = "always", labelsSeparateLines = FALSE) 
+ 
+
+```
+
+```{r, error = FALSE, warning = FALSE, results = "hide" }
+summary_table <- tidyr::separate(as.data.frame(summary(tsdl_london[,c(1:7, 9:11)])),col = "Freq",into = c("Statistic", "Value"), sep = ":")
+summary_table  <- summary_table [,2:4] %>% 
+  tidyr::pivot_wider(names_from = Statistic, values_from = Value)
+colnames(summary_table) <- c("Variable", "Minimum", "Quartile.1st", "Median", "Mean", "Quartile.3rd", "Maximum")
+
+
+df = data.frame(summary_table,
+               Sparkline = c(as.character(htmltools::as.tags(sparkline(tsdl_london[,1], type = "line"))),
+                             as.character(htmltools::as.tags(sparkline(tsdl_london[,2], type = "line"))),
+                             as.character(htmltools::as.tags(sparkline(tsdl_london[,3], type = "line"))),
+                             as.character(htmltools::as.tags(sparkline(tsdl_london[,4], type = "line"))),
+                             as.character(htmltools::as.tags(sparkline(tsdl_london[,5], type = "line"))),
+                             as.character(htmltools::as.tags(sparkline(tsdl_london[,6], type = "line"))),
+                             as.character(htmltools::as.tags(sparkline(tsdl_london[,7], type = "line"))),
+                             as.character(htmltools::as.tags(sparkline(tsdl_london[,9], type = "line"))),
+                             as.character(htmltools::as.tags(sparkline(tsdl_london[,10], type = "line"))),
+                             as.character(htmltools::as.tags(sparkline(tsdl_london[,11], type = "line")))
+             
+          ))
+```
+
+```{r}
+out <- as.htmlwidget(formattable(df))
+out$dependencies <- c(out$dependencies, htmlwidgets:::widget_dependencies("sparkline", "sparkline"))
+out
+```
+
+
+The dependent variable is __*water_consump*__, residential water consumption for the city of London between Janaury 1983 through April 1994. __*water_consump*__ is the consumption for the residential consumers who had their meter read in the given month for the last two months, and is considered a proxy for the total residential water conusmption. The independent variables are __*num_consumers*__ total residential consumers who had their water meters read in the given month for the last two months, __*precipitation_ml*__ monthly precipitation in millimeters, and __*temp_celcius*__ temperature in celcius. The number of residential consumers and residential water consumption were missing for June 1988 and an estimate (via intervention analysis) was provided in the dataset. __*Time in months*__ has a correlation coefficient of 0.9961 with year, and was used in lieu of year as the trend.
+
+
+```{r, message = FALSE}
+
+ggcorr(
+  tsdl_london[,c(1:7)], 
+  label = TRUE, 
+  hjust = 0.75, 
+  label_size = 4, 
+  label_round = 2, 
+  label_alpha = TRUE
+  
+)
+
+```
+
+ 
+
+# Graphs of the relationships between X and Y; and expectations of X and Y relationship
+```{r, message = FALSE}
+plotly::ggplotly(ggplot(tsdl_london, aes(x = num_consumers, y = water_consump)) + 
+  geom_point() + 
+  geom_smooth(method = "lm") + 
+  theme_bw() +
+  ggtitle("Residential Water Consumption, London, Janaury 1983 - April 1994") +
+  xlab("Number of Consumers") +
+  theme(axis.title.y=element_blank()))
+
+```
+
+The XY plot of number of consumers and water consumption shows a positive trend between consumption and customers as I expected. I expect the line of best fit to have a positive coefficient. 
+
+```{r, message = FALSE}
+plotly::ggplotly(ggplot(tsdl_london, aes(x = precipitation_ml, y = water_consump)) + 
+  geom_point() + 
+  geom_smooth(method = "lm") + 
+  theme_bw() +
+  ggtitle("Residential Water Consumption, London, Janaury 1983 - April 1994") +
+  xlab("Precipitation (ml)") +
+  theme(axis.title.y=element_blank()))
+
+```
+The XY plot of precipitation in milliliters and water consumption shows a flat to slightly negative trend. I did not think precipitation would have any effect on residential water consumption unless a significant amount of individuals with water meter accounts had a reason to adjust their consumption such as rain water collections. I expect a coefficient close to zero and possibly negative. 
+```{r, message = FALSE}
+plotly::ggplotly(ggplot(tsdl_london, aes(x = temp_celcius, y = water_consump)) + 
+  geom_point() + 
+  geom_smooth(method = "lm") + 
+  theme_bw() +
+  ggtitle("Residential Water Consumption, London, Janaury 1983 - April 1994") +
+  xlab("Temperature (Celcius)") +
+  theme(axis.title.y=element_blank()))
+
+```
+
+The XY plot of temperature in celcius and water consumption shows a positive trend between consumption and temperature. I expect that in hotter months, individuals would need and want more water; and that temperatue would have a positive coefficient. 
+
+```{r, message = FALSE}
+plotly::ggplotly(ggplot(tsdl_london, aes(x = month, y = water_consump)) + 
+  geom_point() + 
+  geom_smooth(method = "lm") + 
+  theme_bw() +
+  ggtitle("Residential Water Consumption, London, Janaury 1983 - April 1994") +
+  xlab("Month") +
+  theme(axis.title.y=element_blank()))
+```
+
+The XY plot of month and water consumption shows what appears to be seasonality in consumption. There appears to be nonlinear and to arc or curve, with colder months (12, 1, 2, and 3) having lower values, while warmer months (6, 7, 8, 9 and 10) having some of the highest values of consumption. I expect the coefficient to be approximately positive and statistically insignificant.
+
+```{r, message = FALSE}
+plotly::ggplotly(ggplot(tsdl_london, aes(x = time_in_months, y = water_consump)) + 
+  geom_point() + 
+  geom_smooth(method = "lm") + 
+  theme_bw() +
+  ggtitle("Residential Water Consumption, London, Janaury 1983 - April 1994") +
+  xlab("Time in Months") +
+  theme(axis.title.y=element_blank()))
+
+```
+
+The XY plot of time in months and water consumption shows a slight trend and random scattering of points. I expect the coefficient to be approximately positive and statistically insignificant.
+
+```{r, message = FALSE}
+plotly::ggplotly(ggplot(tsdl_london, aes(x = year, y = water_consump)) + 
+  geom_point() + 
+  geom_smooth(method = "lm") + 
+  theme_bw() +
+  ggtitle("Residential Water Consumption, London, Janaury 1983 - April 1994") +
+  xlab("year") +
+  theme(axis.title.y=element_blank()))
+
+```
+
+
+# Model 1: A simple time series regression, with one X and no trend
+```{r}
+model_1 <- lm(water_consump ~ num_consumers, data = tsdl_london.ts)
+
+summary(model_1)
+```
+
+An OLS on water consumption (__*water_consump*__) and the number of customers (__*num_consumers*__) is statistically significant at the probability value (p-value) = 0.001. The coefficient for the number of customers is 1729.4. For every customer in the simple OLS time series regression, all else equal, monthly consumption is expected to increase approximately 1729.4 milliliters. The intercept coefficient is 2981010.0, the expected value of water consumption if there were no consumers, and statistically insignificant (p-value > 0.1). The adjusted R-squared of model 1 is 0.2001
+
+
+#Model 2: A time series regression with one X and trend 
+```{r}
+model_2 <- lm(water_consump ~ num_consumers + time_in_months , data = tsdl_london.ts)
+
+summary(model_2)
+```
+For Model 2, I added to Model 1 a trend variable __*time_in_months*__, which counts the months from 1983, with Janauary 1983 as 1, and April 1994 as 136. For Model 2, the intercept coefficient is -2048127.4, the expected value of water consumption if there were no consumers, all else equal, and statistically insignificant (p-value > 0.1). The coefficient for the number of customers is 1991.8, statistically significant (p-value < 0.001). For every additional customer, monthly consumption is expected to increase approximately 1992 milliliters. The time in months coefficient is -46821.8 which indicates that for each additional month in the series, all else equal, water consumption is expected to decrease by -46821.8 milliliters, and statistically insignificant (p-value > 0.1). The adjusted R-squared of model 2 is 0.212
+
+
+```{r}
+anova(model_1, model_2)
+```
+A F-test of the nested model shows no statistically significant difference between models 1 and 2. The p-value for the unrestricted model “Model 2” is greater than 0.5 but less than 0.1, which indicates that probability of obtaining a F statistic of 3.0307 or larger due to random sampling is less than 1 in 10.
+
+#Model 3: A time series regression with many Xs and trend; autocorrelation diagnostics
+```{r}
+model_3 <- lm(water_consump ~ num_consumers + precipitation_ml + temp_celcius + month + time_in_months, data = tsdl_london.ts)
+summary(model_3)
+```
+
+##Water consumption = number of consumers + precipitation in ml + temperature in celcius + month +  time in months + error
+
+For Model 3, I started with Model 2 and added: monthly perciptation __*precipitation_ml*__, monthly temperature __*temp_celcius*__, and a variable to mark the month of the year (January as 1, December as 12)  __*month*__. For Model 3, the intercept coefficient is 6286500 and it is the expected value of water consumption if there were no consumers, all else equal, and statistically insignificant (p-value > 0.1). The coefficient for the number of customers is 1540, statistically significant (p-value < 0.001). For every additional customer, all else equal, monthly consumption is expected to increase approximately 1540. The monthly precipitation coefficient is -29610, the expected change in water consumption per one unit increase in precipitation, all else equal, and statistically insignificant (p-value > 0.1). The coefficient for the temperature is 727113, the expected change in water consumption per one unit increase in temperature, all else equal and statistically significant (p-value < 0.001). The month coefficient is 235720, the expected change in water consumption per one unit increase in months, all else equal, and statistically insignificant (p-value > 0.1). The time in months coefficient is -24651 which indicates that for each additional month in the series, all else equal, water consumption is expected to decrease by -24651, statistically insignificant (p-value > 0.1). The adjusted R-squared of model 3 is 0.5252.
+
+
+```{r}
+plot(model_3)
+
+```
+
+Residual plots consistently show the months July 1988, August 1988, and August 1989 to be high consumption values for the model. A rough eyeballing of the data values for August in 1988 and 1989 show a higher than average number of consumers and that August was the hottest of the time series in 1988 and about average in 1989. It is not clear why consumption was so high but is interesting to note and to consider interpolating for model refinement. Although the Town of Camelford, England had a water pollution incident in July 1988, it is not clear how the pollution incident is related to the City of London's water consumption given their approximate distance (230 miles/ 370 kilometers). 
+
+
+```{r}
+# Shapiro-Wilk test for normality # of the model residuals
+shapiro.test(model_3$residuals) 
+
+```
+The QQ plot suggests that residuals are not normally distributed. The Shapiro-Wilk normality test (p-value < 0.001) reveals the residuals are not normally distributed, which indicate that this an OLS model might be inadequate.
+
+```{r, include = FALSE}
+
+library(lmtest)
+library(car)
+```
+
+
+```{r}
+# BP test for heteroskedasticity
+library(lmtest)
+# BP test for heteroskedasticity
+bptest(model_3) 
+```
+
+###BP test 
+BP statistic of 10.853 with a p-value of 0.05437. This indicates heteroskedasticity in the errors at the p < 0.1 level but not at p < 0.05 level. This suggests that we should use heteroskedastic robust standard errors. 
+
+```{r}
+library(car) 
+#VIF test for multicollinearity
+vif(model_3) 
+```
+
+###VIF interpreation
+The VIF for all variables in Model 3 are all positive and between, 1 and less than 1.5. The VIF indicates whether multicollinearity exists due to a particular independent variable. The VIF test indicates no multicollinearity among the independent variables. 
+
+### ACF plot of the residuals for Model 3
+```{r}
+e_model_3 <- model_3$residuals
+acf(e_model_3)
+plot(e_model_3)
+
+#library(ggfortify)
+#autoplot(acf(model_3$residuals, plot = FALSE)) + 
+#  geom_hline(yintercept=0) + 
+#  theme_bw()
+
+
+```
+
+The ACF plot/correlogram shows autocorrelation (AR) at lag 1 and general autoregressive tendencies and seasonality in the lags; with the AR flipping approximately every 3 months of lag, for the two years of lag shown. AR1 indicates possible unit roots in the data generating process, unit roots indicate the data generating process mimics a random walk and would need to be corrected. A random walk is a non-stationary process with no specified mean or variance. However, the increments in a random walk process follow a white noise process, which is stable and stationary with a mena of zero.
+
+This indicates that the OLS standard errors of the model are predictable over time, a major violation of the Gauss-Markov assumptions that errors are i.i.d. independent identically distributed. The ACF plot also shows non-stationarty of the errors, that is the mean and variance of the errors fluctuate over time (and are not stationary or constant). 
+
+### Durbin-Watson and Breusch-Godfrey tests
+```{r}
+dwtest(model_3)
+
+bgtest(model_3)
+
+```
+Unsurpringsly the Durbin-Watson and Breusch-Godfrey tests show strong statistically significance for autocorrelation. We should use autocorrelation robust standard errors, such as Newey-West standard errors, to address the serial correlation of the lags and heteroskedasticity of the Model 3. 
+
+```{r, include = FALSE}
+library(sandwich)
+```
+
+The Newey-West standard errors for model 3:
+```{r}
+library(sandwich)
+coeftest(model_3, vcov = NeweyWest(model_3, lag = 1))
+```
+
+For comparison, the OLS standard errors for model 3 are:
+```{r}
+summary(model_3)
+```
+
+
+
+#First differenced time series regression
+```{r, include = FALSE}
+library(QMSS)
+```
+```{r, messages = FALSE}
+library(QMSS)
+
+lm.Dmodel_3 <- lm(firstD(water_consump) ~ firstD(num_consumers) + firstD(precipitation_ml) + firstD(temp_celcius) + firstD(month) + time_in_months, data = tsdl_london.ts)
+
+summary(lm.Dmodel_3)
+```
+
+###First differenced model interpretation
+As we previously saw, Model 3 is non-stationary. Differencing should address this.
+For the first differenced version of Model 3, the intercept coefficient is 314630.4, the expected value of water consumption if there were no consumers, all else equal, and statistically insignificant (p-value > 0.1). The coefficient for the number of customers is 1567, statistically significant (p-value < 0.001). For every additional customer, all else equal, monthly consumption is expected to increase approximately 1567 milliliters. The monthly precipitation coefficient is 21320.4, the expected change in water consumption per one unit increase in precipitation, all else equal, and statistically insignificant (p-value > 0.1). The coefficient for the temperature is 611571.5, the expected change in water consumption per one unit increase in temperature, all else equal and statistically significant (p-value < 0.001). The month coefficient is -713882.3, the expected change in water consumption per one unit increase in months, all else equal, and statistically significant (p-value < 0.01). The time in months coefficient is -5631.2 which indicates that for each additional month in the series, all else equal, water consumption is expected to decrease by -5631.2 milliliters and statistically insignificant (p-value = 0.1). The adjusted R-squared of the first differenced model 3 is 0.524.
+```{r}
+e3 <- lm.Dmodel_3$resid
+acf(e3, col = "red", lwd = 2, ci.type = "ma") 
+plot(e3)
+
+```
+
+
+The ACF plot of the first differenced model 3 still shows fluctuating positive and negative autocorrelations, including statististical signficance in the 3rd, 9th, 12th, 11th and 15th lags, however it shows fewer lags with statistically significant autocorrelations than the OLS model 3. The first differenced model indicates a reduction in the autocorreation and a better fit.  
+
+### Durbin-Watson and Breusch-Godfrey tests - First differenced Model 3
+```{r}
+lmtest::dwtest(lm.Dmodel_3)
+
+lmtest::bgtest(lm.Dmodel_3)
+```
+The Durbin Watson and Breusch Godfrey tests of the first differences also showed improvement in autocorrelation and removed the statistical significance of autocorrelation in the errors. 
+
+```{r}
+bgtest(lm.Dmodel_3, order = 1)
+bgtest(lm.Dmodel_3, order = 2)
+bgtest(lm.Dmodel_3, order = 3)
+bgtest(lm.Dmodel_3, order = 4)
+bgtest(lm.Dmodel_3, order = 5)
+bgtest(lm.Dmodel_3, order = 6)
+bgtest(lm.Dmodel_3, order = 7)
+bgtest(lm.Dmodel_3, order = 8)
+bgtest(lm.Dmodel_3, order = 9)
+bgtest(lm.Dmodel_3, order = 10)
+bgtest(lm.Dmodel_3, order = 11)
+bgtest(lm.Dmodel_3, order = 12)
+```
+Breusch Godfrey tests do however show that autocorrelation remains are higher orders, specifically for all lags that between 3 and 12 lags of the model.
+
+
+#Check for unit roots. 
+Augmented Dicky Fuller (DF) tests were conducted to test for unit roots in the underlying variables. The DF test of the dependent variable (water consumption) indicates that we cannot reject the null of unit roots at 6 lags of the variable (i.e. there are unit roots that need to be addressed). 
+
+```{r, message = FALSE}
+library(fUnitRoots)
+#P-value is too high to be able to reject the null of Unit Root, therefore, we might have a unit root here.
+
+adfTest(tsdl_london[,"water_consump"], lags = 1, type="nc", description = NULL)
+adfTest(tsdl_london[,"water_consump"], lags = 2, type="nc", description = NULL)
+adfTest(tsdl_london[,"water_consump"], lags = 3, type="nc", description = NULL)
+adfTest(tsdl_london[,"water_consump"], lags = 4, type="nc", description = NULL)
+adfTest(tsdl_london[,"water_consump"], lags = 5, type="nc", description = NULL)
+adfTest(tsdl_london[,"water_consump"], lags = 6, type="nc", description = NULL)
+
+```
+
+Interestingly, the Ljung-Box "white-noise" tests, for the residuals in models 1, 2, and 3 do not indicate unit roots.
+```{r}
+Box.test(resid(model_3), lag = 40, type = c("Ljung-Box"), fitdf = 0)
+Box.test(resid(model_2), lag = 40, type = c("Ljung-Box"), fitdf = 0)
+Box.test(resid(model_1), lag = 40, type = c("Ljung-Box"), fitdf = 0)
+```
+
+#Auto ARIMA on the residuals of Model 2
+```{r}
+library(forecast)
+auto.arima(model_2$residuals)
+
+```
+The auto.ARIMA function indcates that an ARIMA of 3,0,1 is the best structure for the errors in Model 2. This indicates the errors in Model 2 should have an AR correction of 3 (i.e that a lag of 3 in the erros for the dependent variable (water consumption)), no differencing, and a moving average correction of 1 (a 1 lag of the errors from the first lag (moving average of 1)). The AIC (4687.47) is the measure of model fit and the higher the AIC the better the model.
+
+The arima() function generated an error __"Error in solve.default(res$hessian * n.used, A) : system is computationally singular: reciprocal condition number = 1.66623e-16"__ when I went to see the coefficients (weights for each lag) auto.ARIMA() suggested for Model 2. I reduced the scale of the 
+ y-variable __*water_consump*__ data by 10, which provided accurate weights for the y-variable lags (ar1, ar2, and ar3) and for the moving average (ma1).
+```{r}
+y_scaled_by_10 <- tsdl_london.ts[,"water_consump"]/10
+
+xvars_m2 <- tsdl_london.ts[,c("num_consumers","time_in_months")]
+sugg.arima.model_2 <- arima(y_scaled_by_10, order = c(3, 0, 1), xreg = xvars_m2)
+summary(sugg.arima.model_2)
+
+```
+The coefficients for __*ar1*__ (0.2298, s.e. = 0.237), __*ar2*__ (0.4696, s.e. = 0.1573), and __*ar3*__ (-0.4565, s.e. = 0.0769) are the weights for the first, second and third lags of the dependent variable, __*water_consump*__. The coefficient for __*ma1*__ (0.6382, s.e. = 0.2914) is the weighted sum of the current and lagged errors, for a lag of 1. After reducing the scale the y-variable __*water_consump*__ data by 10, the coefficients for the intercept, number of consumers and time in months variables were also reducted by a scale of 10. After returning to the normal scale, the coefficient for the __*intercept*__ is 2396518 (s.e. = 4554258), and it represents the water consumption, when all other independent variables are zero. After returning to the normal scale, the coefficient for __*num_consumers*__ is 1838.041 (s.e. = 129.852), and it represents the change in water consumption, all else equal, for one unit increase in number of consumers. After returning to the normal scale, the coefficient for __*time_in_months*__ is -40935.30 (s.e. = 33578.81), and it represents the change in water consumption, all else equal, for one unit increase in the monthly time trend.
+
+#Auto ARIMA on the residuals of Model 3
+```{r}
+auto.arima(model_3$residuals)
+
+```
+
+The auto.ARIMA function indcates that an ARIMA of 2,0,2 is the best structure for the errors in Model 3. This indicates that the errors in Model 3 should have an AR correction of 2 (i.e. that a lag of 2 for the dependent variable (water consumption)), no differencing, and a moving average correction of 2 (i.e. 2 lags of the errors from the previous lags (moving average of 2)). The AIC for model 3 (4673.6) is slightly less that the AIC for model 2, indicating model 2 is the better model. 
+
+
+```{r}
+
+xvars_m3 <- tsdl_london.ts[,c("num_consumers","time_in_months", "precipitation_ml", "temp_celcius", "month")]
+sugg.arima.model_3 <- arima(y_scaled_by_10, order = c(2, 0, 2), xreg = xvars_m3)
+summary(sugg.arima.model_3)
+```
+
+
+The coefficients for __*ar1*__ (0.4646, s.e. = 0.1424) and __*ar2*__ (-0.4072, s.e. = 0.1353) are the weights for the first and second lags of the dependent variable, water consumption. The coefficient for __*ma1*__ (0.1954, s.e. = 0.1138) and __*ma2*__ (0.6385, s.e. = 0.1179) are the weighted sum of the current and lagged errors, for the first and second lags. After reducing the scale the y-variable __*water_consump*__ data by 10, the coefficients for the intercept, number of consumers and time in months variables were also reducted by a scale of 10. After returning to the normal scale, the coefficient for the __*intercept*__ is 3192895 (s.e. = 4921449), and it represents the water_consumption, when all other independent variables are zero. After returning to the normal scale, the coefficient for __*num_consumers*__ is 1661.961 (s.e. = 144.190), and it represents the change in water_consumption, all else equal, for one unit increase in number of consumers. After returning to the normal scale, the coefficient for __*time_in_months*__ is -29212.90 (s.e. = 27527.78), and it represents the change in water_consumption, all else equal, for one unit increase in the monthly time trend. After returning to the normal scale, the coefficient for __*precipitation_ml*__ is  11599.13 (s.e. = 12038.03), and it represents the change in water_consumption, all else equal, for one unit increase in the precipitation by 1 unit change in precipitation_ml (1 milliliter). After returning to the normal scale, the coefficient for __*temp_celcius*__ is 637772.5 (s.e. = 111173), and it represents the change in water_consumption, all else equal, for one unit increase in number of consumers. After returning to the normal scale, the coefficient for __*month*__ is -286421.7 (s.e. = 210510.6), and it represents the change in water_consumption, all else equal, for one unit increase in the 12 levels for the months of the year (January = 1 ... December = 12). 
+
+
+```{r}
+auto.arima(lm.Dmodel_3$residuals)
+```
+
+The auto.ARIMA function for the first differenced version of model 3 indicates an ARIMA (0,0,0) is the best strucutre for the errors in the model. This indicates no further correction to the errors for the model. The AIC is the lowest for this model (compared to for Model 2 and Model 3), however at 4668.21. For interpetation of ARIMA(0,0,0) for the First Difference Model, see the section entitled __*"First differenced model interpretation"*__.
+
+```{r end setup, include=FALSE}
+options(warn=0)
+```
